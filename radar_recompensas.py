@@ -407,8 +407,11 @@ def main():
         d["pagos"] += ult.get("pagos_anunciados") or 0
         d["monto_pagado"] += ult.get("monto_pagado_anunciado") or 0
     for r, d in sorted(porrepo.items(), key=lambda x: (-x[1]["pagos"], -x[1]["reclamos"])):
-        if d["pagos"]:
+        if d["pagos"] and d["pagos"] >= max(d["reclamos"], 1):
             veredicto = f"PAGA — {d['pagos']} pago(s) anunciado(s) por USD {d['monto_pagado']:,.2f}"
+        elif d["pagos"]:
+            veredicto = (f"PAGA POCO — {d['pagos']} pago(s) por USD {d['monto_pagado']:,.2f} "
+                         f"frente a {d['reclamos']} reclamo(s) sin cobrar")
         elif d["reclamos"]:
             veredicto = f"NO PAGA / sin pagos — {d['reclamos']} reclamo(s) y ningún pago anunciado"
         else:
