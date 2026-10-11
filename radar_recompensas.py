@@ -242,6 +242,28 @@ def revisar(c):
     else:
         c["quien_paga"] = "no expuesto por la API (en Opire se ve en la web)"
 
+    # ---------- RECLAMOS PREVIOS y MONTO REAL (añadido el 11-oct tras verificar trovu) ----------
+    # Medido en trovu#329: la API de Opire mostraba USD 30, pero en el issue había TRES órdenes
+    # /reward (30 + 20 + 20 = 70), y el robot de Opire anunció en abr-2024 que DOS usuarios ya
+    # habían "reclamado todas las recompensas". Se pueden perder horas en algo ya tomado.
+    cs = gh_api(f"repos/{owner}/{repo}/issues/{num}/comments?per_page=100")
+    if isinstance(cs, list):
+        texto_com = "\n".join((c.get("body") or "") for c in cs)
+        montos = re.findall(r"/reward\s+\$?([0-9]+)", (c.get("cuerpo") or "") + "\n" + texto_com)
+        if montos:
+            c["monto_texto"] = sum(float(x) for x in montos)
+            if (c.get("monto_usd") or 0) < c["monto_texto"]:
+                c["monto_api"] = c.get("monto_usd")
+                c["monto_usd"] = c["monto_texto"]
+        reclamantes = sorted(set(re.findall(r"@([A-Za-z0-9_-]+)\s+has claimed all rewards", texto_com)))
+        if reclamantes:
+            c["reclamos_previos"] = reclamantes
+            motivos.append("las recompensas YA fueron reclamadas por "
+                           + ", ".join("@" + r for r in reclamantes))
+        intentos = len(re.findall(r"^\s*/try\b", texto_com, re.M))
+        if intentos:
+            c["intentos"] = intentos
+
     # ---------- ¿QUIÉN RESPALDA EL DINERO? (el filtro que faltaba) ----------
     # Regla aprendida el 11-oct: un monto escrito en un issue NO es una recompensa. Casi siempre es
     # una propuesta de un desconocido sin plataforma que la garantice (medido en omi#21205: el autor
@@ -317,6 +339,13 @@ def main():
             print(f"           {c['titulo'][:88]}")
             print(f"           {c['url']}   (comentarios: {c['comentarios']}, repo actualizado: {c['actualizado_repo']})")
             print(f"           QUIÉN PONE LA PLATA: {c.get('quien_paga','?')}")
+            if c.get("monto_api") is not None:
+                print(f"           MONTO: la API decía USD {c['monto_api']:.0f}, pero los /reward del issue "
+                      f"suman USD {c.get('monto_texto', 0):.0f}")
+            if c.get("reclamos_previos"):
+                print(f"           ⚠ RECLAMADO ANTES por: {', '.join('@'+r for r in c['reclamos_previos'])}")
+            if c.get("intentos"):
+                print(f"           avisaron que lo intentarían (/try): {c['intentos']}")
             if c.get("aviso_paga"):
                 print(f"           {c['aviso_paga']}")
     else:
@@ -328,8 +357,14 @@ def main():
         f.write(f"Revisados {len(a_revisar)} · **sirven {len(sirven)}** · descartados {len(descartados)}\n\n")
         f.write("## Vale la pena\n\n")
         for c in sirven:
+            avisos = ""
+            if c.get("reclamos_previos"):
+                avisos += f" · **RECLAMADO ANTES** por {', '.join('@'+r for r in c['reclamos_previos'])}"
+            if c.get("intentos"):
+                avisos += f" · /try: {c['intentos']}"
             f.write(f"- **USD {c['monto_usd'] or '?'}** — [{c['owner']}/{c['repo']}#{c['num']}]({c['url']}) · "
-                    f"rivales: {c['rivales'] or 0} · {c['lenguaje']} · {c['anti_ia']}\n  {c['titulo'][:120]}\n")
+                    f"rivales: {c['rivales'] or 0} · {c['lenguaje']} · {c['anti_ia']}{avisos}\n"
+                    f"  quién pone la plata: {c.get('quien_paga','?')}\n  {c['titulo'][:120]}\n")
         f.write("\n## Descartados (y por qué)\n\n")
         for c in sorted(descartados, key=lambda x: x["motivos"][0]):
             f.write(f"- {c['owner']}/{c['repo']}#{c['num']} — {', '.join(c['motivos'])} · {c['url']}\n")
