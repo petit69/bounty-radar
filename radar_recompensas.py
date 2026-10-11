@@ -134,6 +134,7 @@ def de_github(por_busqueda=30):
                 "monto_usd": extraer_monto((it.get("body") or "")[:4000]),
                 "etiquetas": [l["name"] for l in (it.get("labels") or [])],
                 "cuerpo": (it.get("body") or "")[:6000],
+                "autor": (it.get("user") or {}).get("login"),
                 "rivales": None,   # se mide después, contando los PR que reclaman ese issue
                 "creado": None,
                 "comentarios": it.get("comments"),
@@ -193,6 +194,7 @@ def revisar(c):
                 break
 
     # rivales reales: PR que ya reclaman ese issue (medido en la línea de tiempo del issue)
+    pr_autores = set()
     if not motivos and it:
         tl = gh_api(f"repos/{owner}/{repo}/issues/{num}/timeline?per_page=100")
         if isinstance(tl, list):
@@ -201,10 +203,44 @@ def revisar(c):
                 src = (ev.get("source") or {}).get("issue") or {}
                 if ev.get("event") == "cross-referenced" and src.get("pull_request"):
                     prs.add(src.get("number"))
+                    quien = (src.get("user") or {}).get("login")
+                    if quien:
+                        pr_autores.add(quien)
             c["prs_abiertos"] = len(prs)
             c["rivales"] = len(prs)
     if c.get("rivales") is None:
         c["rivales"] = 0
+
+    # saturación: con 10 o más PR compitiendo, el pago por hora invertida se vuelve miseria
+    if not motivos and c["rivales"] >= 10:
+        motivos.append(f"saturado: {c['rivales']} PR ya compitiendo")
+
+    # ---------- ¿QUIÉN PONE LA PLATA? (añadido el 11-oct: el monto no dice nada sin saber quién lo firma) ----------
+    autor = c.get("autor")
+    if autor:
+        ident = "desconocido"
+        if autor.lower() == owner.lower():
+            ident = "el propio DUEÑO del repositorio"
+        else:
+            # ¿miembro de la organización dueña del repo?
+            miembro = None
+            try:
+                p = subprocess.run(["gh", "api", f"orgs/{owner}/members/{autor}"],
+                                   capture_output=True, text=True, timeout=30)
+                miembro = (p.returncode == 0)
+            except Exception:
+                miembro = None
+            if miembro:
+                ident = "miembro del equipo dueño del repositorio"
+            else:
+                u = gh_api(f"users/{autor}") or {}
+                ident = (f"DESCONOCIDO — @{autor}: cuenta creada {str(u.get('created_at'))[:10]}, "
+                         f"{u.get('public_repos')} repos, {u.get('followers')} seguidores")
+        c["quien_paga"] = ident
+        if autor in pr_autores:
+            c["aviso_paga"] = "OJO: el que ofrece la recompensa ya tiene su PROPIO PR compitiendo"
+    else:
+        c["quien_paga"] = "no expuesto por la API (en Opire se ve en la web)"
 
     # ---------- ¿QUIÉN RESPALDA EL DINERO? (el filtro que faltaba) ----------
     # Regla aprendida el 11-oct: un monto escrito en un issue NO es una recompensa. Casi siempre es
@@ -280,6 +316,9 @@ def main():
                   f"{c['rivales'] or 0:>7}  {(c['owner']+'/'+c['repo'])[:37]:<38} {c.get('cobro','?')}")
             print(f"           {c['titulo'][:88]}")
             print(f"           {c['url']}   (comentarios: {c['comentarios']}, repo actualizado: {c['actualizado_repo']})")
+            print(f"           QUIÉN PONE LA PLATA: {c.get('quien_paga','?')}")
+            if c.get("aviso_paga"):
+                print(f"           {c['aviso_paga']}")
     else:
         print("  (ninguna recompensa pasó el filtro hoy: eso también es un dato)")
 
