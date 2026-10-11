@@ -264,6 +264,31 @@ def revisar(c):
         if intentos:
             c["intentos"] = intentos
 
+        # ---------- LA PRUEBA DE PAGO (v5, 11-oct): el robot de Opire PUBLICA cada pago hecho ----------
+        # Medido en trovu#329: 8 reclamos entre abr-2024 y mar-2026, y UN solo pago anunciado
+        # (USD 10 de propina al usuario @MindfulPol). Eso es evidencia, no opinión.
+        pagos = re.findall(r"@([A-Za-z0-9_-]+) completed the payment of \$?([0-9.,]+)", texto_com)
+        if pagos:
+            c["pagos_anunciados"] = {
+                "n": len(pagos),
+                "total": sum(float(p[1].replace(",", "")) for p in pagos),
+                "quienes": sorted({p[0] for p in pagos}),
+            }
+        creadores = sorted({x[0] for x in re.findall(r"@([A-Za-z0-9_-]+) created a \$?[0-9.,]+ reward", texto_com)})
+        if creadores:
+            c["creadores"] = creadores
+        n_pagos = c.get("pagos_anunciados", {}).get("n", 0)
+        n_reclamos = len(c.get("reclamos_previos", []))
+        if n_reclamos and not n_pagos:
+            c["historial_pago"] = (f"MALO — {n_reclamos} reclamo(s) publicados y NINGÚN pago anunciado "
+                                   f"por el robot de Opire en este issue")
+        elif n_pagos:
+            c["historial_pago"] = (f"HAY PAGOS CONFIRMADOS — {n_pagos} pago(s) por USD "
+                                   f"{c['pagos_anunciados']['total']:,.2f}, hechos por "
+                                   + ", ".join("@" + q for q in c["pagos_anunciados"]["quienes"]))
+        else:
+            c["historial_pago"] = "sin dato — no hay ni pagos ni reclamos publicados en este issue"
+
     # ---------- ¿QUIÉN RESPALDA EL DINERO? (el filtro que faltaba) ----------
     # Regla aprendida el 11-oct: un monto escrito en un issue NO es una recompensa. Casi siempre es
     # una propuesta de un desconocido sin plataforma que la garantice (medido en omi#21205: el autor
@@ -329,6 +354,70 @@ def main():
     sirven.sort(key=lambda x: -x["puntaje"])
     descartados = [c for c in a_revisar if c["motivos"]]
 
+    # ---------- HISTORIAL ACUMULADO: ¿este repo/creador PAGA? (v6, 11-oct) ----------
+    # La estadística global no se puede medir (el buscador de GitHub no indexa los comentarios del robot:
+    # medido, 25 menciones de "opirebot" en todo GitHub cuando un solo issue tiene 15). Lo que SÍ se puede
+    # es acumular, día a día, la evidencia de pago publicada en los issues que el radar revisa.
+    def cargar_historial():
+        try:
+            with open(os.path.join(SALIDA, "historial_bounties.json")) as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    hist = cargar_historial()
+    for c in a_revisar:
+        clave = f"{c['owner']}/{c['repo']}#{c['num']}"
+        reg = hist.setdefault(clave, {"mediciones": []})
+        reg["repo"] = f"{c['owner']}/{c['repo']}"
+        reg["titulo"] = (c.get("titulo") or "")[:120]
+        reg["monto_usd"] = c.get("monto_usd")
+        reg["creadores"] = c.get("creadores")
+        reg["historial_pago"] = c.get("historial_pago")
+        reg["ultimo_estado"] = {
+            "fecha": HOY,
+            "reclamos": c.get("reclamos_previos") or [],
+            "pagos_anunciados": (c.get("pagos_anunciados") or {}).get("n", 0),
+            "monto_pagado_anunciado": (c.get("pagos_anunciados") or {}).get("total", 0),
+            "pr_compitiendo": c.get("rivales"),
+            "motivos": c.get("motivos"),
+        }
+        reg["mediciones"].append({
+            "fecha": HOY,
+            "reclamos": len(c.get("reclamos_previos") or []),
+            "pagos": (c.get("pagos_anunciados") or {}).get("n", 0),
+            "pr": c.get("rivales"),
+        })
+        reg["mediciones"] = reg["mediciones"][-90:]
+    try:
+        with open(os.path.join(SALIDA, "historial_bounties.json"), "w") as f:
+            json.dump(hist, f, indent=1, ensure_ascii=False, sort_keys=True)
+        guardado = True
+    except Exception:
+        guardado = False
+
+    print("\n### ¿PAGAN? — historial acumulado, repositorio por repositorio")
+    porrepo = {}
+    for clave, reg in hist.items():
+        r = reg.get("repo", "?")
+        d = porrepo.setdefault(r, {"recompensas": 0, "reclamos": 0, "pagos": 0, "monto_pagado": 0.0})
+        d["recompensas"] += 1
+        ult = reg.get("ultimo_estado") or {}
+        d["reclamos"] += len(ult.get("reclamos") or [])
+        d["pagos"] += ult.get("pagos_anunciados") or 0
+        d["monto_pagado"] += ult.get("monto_pagado_anunciado") or 0
+    for r, d in sorted(porrepo.items(), key=lambda x: (-x[1]["pagos"], -x[1]["reclamos"])):
+        if d["pagos"]:
+            veredicto = f"PAGA — {d['pagos']} pago(s) anunciado(s) por USD {d['monto_pagado']:,.2f}"
+        elif d["reclamos"]:
+            veredicto = f"NO PAGA / sin pagos — {d['reclamos']} reclamo(s) y ningún pago anunciado"
+        else:
+            veredicto = "sin dato (ni reclamos ni pagos publicados)"
+        print(f"   {r[:42]:<43} recompr.:{d['recompensas']:>2}  reclamos:{d['reclamos']:>3}  "
+              f"pagos:{d['pagos']:>2}  -> {veredicto}")
+    print(f"   (historial guardado: {'sí' if guardado else 'NO'} en historial_bounties.json · "
+          f"{len(hist)} issues registrados)")
+
     print(f"\n[3/3] RESULTADO: {len(sirven)} vale(n) la pena de {len(a_revisar)} revisados\n")
     if sirven:
         print(f"  {'monto':>8}  {'rivales':>7}  {'repo':<38} {'quién respalda el dinero'}")
@@ -344,6 +433,9 @@ def main():
                       f"suman USD {c.get('monto_texto', 0):.0f}")
             if c.get("reclamos_previos"):
                 print(f"           ⚠ RECLAMADO ANTES por: {', '.join('@'+r for r in c['reclamos_previos'])}")
+            print(f"           ¿PAGAN? {c.get('historial_pago','sin dato')}")
+            if c.get("creadores"):
+                print(f"           los que pusieron la plata: {', '.join('@'+x for x in c['creadores'])}")
             if c.get("intentos"):
                 print(f"           avisaron que lo intentarían (/try): {c['intentos']}")
             if c.get("aviso_paga"):
