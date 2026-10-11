@@ -156,7 +156,13 @@ def revisar(c):
         if creado >= (datetime.date.today() - datetime.timedelta(days=90)).isoformat() and estrellas < 5:
             motivos.append("repo nuevo sin estrellas (posible granja)")
         if (rep.get("pushed_at") or "")[:10] < (datetime.date.today() - datetime.timedelta(days=365)).isoformat():
-            motivos.append("repo sin actividad hace +1 año")
+            # OJO (corregido el 11-oct tras revisar la salida): un repo sin código nuevo hace un año
+            # puede tener el issue VIVO. No se descarta por eso solo: se avisa.
+            upd = ((it or {}).get("updated_at") or "")[:10]
+            if upd and upd < (datetime.date.today() - datetime.timedelta(days=365)).isoformat():
+                motivos.append("repo e issue sin actividad hace +1 año")
+            else:
+                c["aviso_actividad"] = "el repo no recibe código nuevo hace +1 año (el issue sigue vivo)"
     if PATRONES_BOT.search(c["repo"]) or PATRONES_BOT.search(c["titulo"] or ""):
         motivos.append("pinta de granja de bots")
     if "Bounty Alert" in (c["titulo"] or "") or "🎯" in (c["titulo"] or ""):
