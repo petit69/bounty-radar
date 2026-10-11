@@ -132,6 +132,8 @@ def de_github(por_busqueda=30):
                 "titulo": (it.get("title") or "").strip(),
                 "owner": owner, "repo": repo, "num": num,
                 "monto_usd": extraer_monto((it.get("body") or "")[:4000]),
+                "etiquetas": [l["name"] for l in (it.get("labels") or [])],
+                "cuerpo": (it.get("body") or "")[:6000],
                 "rivales": None,   # se mide después, contando los PR que reclaman ese issue
                 "creado": None,
                 "comentarios": it.get("comments"),
@@ -204,6 +206,26 @@ def revisar(c):
     if c.get("rivales") is None:
         c["rivales"] = 0
 
+    # ---------- ¿QUIÉN RESPALDA EL DINERO? (el filtro que faltaba) ----------
+    # Regla aprendida el 11-oct: un monto escrito en un issue NO es una recompensa. Casi siempre es
+    # una propuesta de un desconocido sin plataforma que la garantice (medido en omi#21205: el autor
+    # ofreció $40 y abrió su propio PR; y sus 3 recompensas "oficiales" tenían 8 PR cada una).
+    texto_pago = " ".join([c.get("cuerpo") or "", c.get("titulo") or ""]).lower()
+    etiquetas = " ".join(c.get("etiquetas") or []).lower()
+    cobro, respaldo = "SIN RESPALDO: sólo una cifra escrita en el texto", False
+    if c.get("fuente") == "Opire" or "/reward" in texto_pago or "opire" in texto_pago:
+        cobro, respaldo = "Opire (recompensa creada con /reward)", True
+    elif "algora.io" in texto_pago or "/bounty $" in texto_pago:
+        cobro, respaldo = "Algora (/bounty con plataforma)", True
+    elif "bountyhub" in texto_pago:
+        cobro, respaldo = "BountyHub", True
+    elif re.search(r"bount|reward|💰|paid", etiquetas):
+        cobro, respaldo = f"etiqueta del propio repo: {', '.join(c.get('etiquetas') or [])}", True
+    c["cobro"] = cobro
+    c["respaldo"] = respaldo
+    if not respaldo:
+        motivos.append("sin plataforma ni etiqueta de pago: nadie garantiza ese dinero")
+
     c["motivos"] = motivos
     c["anti_ia"] = ia
     c["estrellas"] = (rep or {}).get("stargazers_count")
@@ -251,12 +273,11 @@ def main():
 
     print(f"\n[3/3] RESULTADO: {len(sirven)} vale(n) la pena de {len(a_revisar)} revisados\n")
     if sirven:
-        print(f"  {'monto':>8}  {'rivales':>7}  {'repo':<38} {'leng':<10} anti-IA")
-        print("  " + "-" * 84)
+        print(f"  {'monto':>8}  {'rivales':>7}  {'repo':<38} {'quién respalda el dinero'}")
+        print("  " + "-" * 96)
         for c in sirven:
             print(f"  {('USD %.0f' % c['monto_usd']) if c['monto_usd'] else '    ?':>8}  "
-                  f"{c['rivales'] or 0:>7}  {(c['owner']+'/'+c['repo'])[:37]:<38} "
-                  f"{c['lenguaje'][:9]:<10} {c['anti_ia']}")
+                  f"{c['rivales'] or 0:>7}  {(c['owner']+'/'+c['repo'])[:37]:<38} {c.get('cobro','?')}")
             print(f"           {c['titulo'][:88]}")
             print(f"           {c['url']}   (comentarios: {c['comentarios']}, repo actualizado: {c['actualizado_repo']})")
     else:
