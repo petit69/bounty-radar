@@ -33,6 +33,13 @@ PATRONES_IA_PROHIBIDA = re.compile(
     re.IGNORECASE)
 ARCHIVOS_POLITICA = ["AI_POLICY.md", "AI_POLICY", "CONTRIBUTING.md", ".github/CONTRIBUTING.md", "AGENTS.md"]
 
+# Plataformas/repos que YA NO PAGAN (medido el 11-oct-2026). Si aparecen, se descartan: no perder tiempo.
+REPOS_MUERTOS = {
+    "bountysource/core": "Bountysource dejó de pagar en jun-2023 y quebró (nov-2023)",
+    "gitcoinco/web": "Gitcoin descontinuó el producto de bounties",
+    "replit/clui": "Replit cerró sus bounties el 06-sep-2025",
+}
+
 
 def gh_api(path, timeout=60):
     """Lee la API de GitHub con las credenciales ya autorizadas del dueño (gh)."""
@@ -167,6 +174,8 @@ def revisar(c):
         motivos.append("pinta de granja de bots")
     if "Bounty Alert" in (c["titulo"] or "") or "🎯" in (c["titulo"] or ""):
         motivos.append("aviso automático de bots, no trabajo real")
+    if f"{owner}/{repo}".lower() in REPOS_MUERTOS:
+        motivos.append("plataforma que ya no paga: " + REPOS_MUERTOS[f"{owner}/{repo}".lower()])
 
     # política anti-IA del repo (sólo si el resto viene limpio: gasta llamadas)
     ia = "sin dato"
